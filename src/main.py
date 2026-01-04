@@ -1,4 +1,6 @@
+import logging
 import os
+import uuid
 
 from steam.webapi import WebAPI as SteamWebAPI
 from pyspark.sql import SparkSession, functions as F
@@ -13,6 +15,28 @@ STEAM_API_KEY = os.environ.get("STEAM_API_KEY")
 #########################################################
 ##### FUNCTIONS
 #########################################################
+def setup_logging(app_name: str) -> logging.LoggerAdapter:
+    logger = logging.getLogger(app_name)
+    logger.setLevel(logging.INFO)
+
+    run_id = uuid.uuid4()
+
+    file_handler = logging.FileHandler(f'{app_name}.log')
+    file_handler.setLevel(logging.INFO)
+
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.INFO)
+
+    formatter = logging.Formatter('[%(asctime)s][%(levelname)s][%(name)s][%(run_id)s] %(message)s')
+    file_handler.setFormatter(formatter)
+    console_handler.setFormatter(formatter)
+
+    logger.addHandler(file_handler)
+    logger.addHandler(console_handler)
+
+    adapter = logging.LoggerAdapter(logger, {"run_id": run_id})
+    return adapter
+
 # TODO: Add function body to parse args
 def parse_args():
     pass
@@ -46,7 +70,6 @@ def get_all_steam_apps(steam_api: SteamWebAPI, method_path: str, last_appid: int
         last_id = new_results[-1]['appid']
         results.extend(new_results)
 
-    print(f"Got {len(results)} games from steam. ")
     return results
 
 def create_spark_session_if_needed():
@@ -77,6 +100,9 @@ def create_spark_session_if_needed():
 ##### MAIN FUNCTION
 #########################################################
 def main():
+    logger = setup_logging("steam-data-extractor")
+
+    logger.info("Setting up Spark session")
     steam_api = SteamWebAPI(key=STEAM_API_KEY)
     spark = create_spark_session_if_needed()
 
@@ -85,7 +111,7 @@ def main():
 
     df = spark.createDataFrame(results)
     df.persist() # persist the df due to count action
-    print(f"Number of apps got from Steam api: {df.count()}")
+    logger.info(f"Number of apps got from Steam api: {df.count()}")
 
     df = df.withColumn("last_modified_timestamp", df.last_modified.cast("timestamp"))
     df = df.withColumn("last_modified_year", F.year(df.last_modified_timestamp))
@@ -98,7 +124,7 @@ def main():
      .mode("overwrite")
      #.bucketBy(numBuckets=6, col="last_modified_year")
      #.partitionBy(['last_modified_year']# current dataset size is ~5mb thus no partitioning needed
-     .saveAsTable(name="steam.steam_games", format='parquet', mode='overwrite')) # TODO: Add option to save data as table
+     .saveAsTable(name="steam.steam_games", format='parquet', mode='overwrite'))
 
     df.unpersist()
 
